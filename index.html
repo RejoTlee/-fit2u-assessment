@@ -223,7 +223,40 @@ function waLink(phoneDigits, message){
   return 'https://wa.me/' + phoneDigits + '?text=' + encodeURIComponent(message);
 }
 function openWa(href){
-  try{ var w = window.open(href, '_blank'); if(!w){ return false; } return true; }catch(e){ return false; }
+  // Must be called directly from a click. Try a new tab first; if blocked, navigate this tab.
+  try{
+    var w = window.open(href, '_blank');
+    if(w) return true;
+  }catch(e){}
+  try{ window.location.href = href; return true; }catch(e){ return false; }
+}
+function withTimeout(promise, ms){
+  return new Promise(function(resolve, reject){
+    var t = setTimeout(function(){ reject(new Error('timeout')); }, ms);
+    promise.then(function(v){ clearTimeout(t); resolve(v); }, function(e){ clearTimeout(t); reject(e); });
+  });
+}
+/* Enables the WhatsApp button IMMEDIATELY (so the click opens WhatsApp synchronously,
+   which browsers allow), then quietly upgrades the link to a short URL if shortening works. */
+function wireWaButton(o){
+  var btn = document.getElementById(o.btnId);
+  if(!btn) return;
+  var currentUrl = o.link;
+  btn.disabled = false;
+  btn.innerHTML = waIcon() + o.label;
+  btn.onclick = function(){
+    var ok = openWa(waLink(o.phone, o.buildMsg(currentUrl)));
+    if(!ok){ document.getElementById(o.fallbackId).textContent = 'Could not open WhatsApp — please use "Copy Link" and send it manually.'; }
+  };
+  var fb = document.getElementById(o.fallbackId);
+  if(fb) fb.textContent = 'Tap the green button to open WhatsApp with the message ready to send.';
+  withTimeout(shortenLink(o.link), 6000).then(function(shortUrl){
+    if(shortUrl && shortUrl !== o.link){
+      currentUrl = shortUrl;
+      var inp = document.getElementById(o.inputId);
+      if(inp) inp.value = shortUrl;
+    }
+  }).catch(function(){ /* keep full link */ });
 }
 function shortenLink(longUrl){
   function tryCleanUri(){
@@ -518,7 +551,7 @@ function screenClientShareLink(state){
       '<p>Your details are saved. Tap below to open WhatsApp with your trainer\'s chat and the link already typed in — just hit send.</p>'+
     '</div>'+
     '<div class="card">'+
-      '<button class="btn whatsapp" id="waBtn" style="width:100%;" disabled>'+waIcon()+'Preparing link…</button>'+
+      '<button class="btn whatsapp" id="waBtn" style="width:100%;" disabled>'+waIcon()+'Loading…</button>'+
       '<div id="waFallback" class="hint" style="margin-top:10px;"></div>'+
       '<div class="linkbox" style="margin-top:16px;"><input type="text" readonly id="shareLinkInput" value="'+esc(link)+'"><button class="btn secondary" id="copyBtn" style="flex:none;">Copy Link</button></div>'+
       '<div id="copiedMsg" class="copied hidden">Link copied — send it to your trainer.</div>'+
@@ -531,21 +564,10 @@ function screenClientShareLink(state){
   document.getElementById('editBtn').onclick = function(){ render('clientForm', state); };
   document.getElementById('checkStatusBtn').onclick = function(){ render('clientWaiting', state); };
 
-  var waHref = null;
-  shortenLink(link).then(function(shortUrl){
-    var msg = 'Hi! I\'ve completed my FIT2U nutrition intake ('+state.client.fullName+'). Please review and complete my assessment here: '+shortUrl;
-    waHref = waLink(TRAINER_WA, msg);
-    var btn = document.getElementById('waBtn');
-    if(!btn) return; // user already navigated away
-    btn.disabled = false;
-    btn.innerHTML = waIcon()+'Send to Trainer via WhatsApp';
-    btn.onclick = function(){ openWa(waHref); };
-    document.getElementById('shareLinkInput').value = shortUrl;
-    if(shortUrl === link){
-      document.getElementById('waFallback').textContent = 'Could not shorten the link (network issue) — sending the full link instead, which may not open correctly in WhatsApp.';
-    } else if(!openWa(waHref)){
-      document.getElementById('waFallback').textContent = 'Tap the green button above to open WhatsApp.';
-    }
+  wireWaButton({
+    btnId:'waBtn', fallbackId:'waFallback', inputId:'shareLinkInput',
+    link: link, phone: TRAINER_WA, label:'Send to Trainer via WhatsApp',
+    buildMsg:function(u){ return 'Hi! I\'ve completed my FIT2U nutrition intake ('+state.client.fullName+'). Please review and complete my assessment here: '+u; }
   });
 }
 function waIcon(){
@@ -734,7 +756,7 @@ function screenTrainerShareLink(state){
   var waSection;
   if(clientWa){
     waSection =
-      '<button class="btn whatsapp" id="waBtn2" style="width:100%;" disabled>'+waIcon()+'Preparing link…</button>'+
+      '<button class="btn whatsapp" id="waBtn2" style="width:100%;" disabled>'+waIcon()+'Loading…</button>'+
       '<div id="waFallback2" class="hint" style="margin-top:10px;"></div>';
   } else {
     waSection = '<div class="note" style="margin-bottom:0;">No WhatsApp number on file for this client — share the link below manually.</div>';
@@ -758,20 +780,10 @@ function screenTrainerShareLink(state){
   document.getElementById('viewBtn').onclick = function(){ render('fullView', state); };
 
   if(clientWa){
-    shortenLink(link).then(function(shortUrl){
-      var msg = 'Hi '+firstName(name)+'! Your FIT2U nutrition assessment & action plan is ready. View it here: '+shortUrl;
-      var waHref = waLink(clientWa, msg);
-      var btn = document.getElementById('waBtn2');
-      if(!btn) return;
-      btn.disabled = false;
-      btn.innerHTML = waIcon()+'Send to '+esc(firstName(name))+' via WhatsApp';
-      btn.onclick = function(){ openWa(waHref); };
-      document.getElementById('shareLinkInput2').value = shortUrl;
-      if(shortUrl === link){
-        document.getElementById('waFallback2').textContent = 'Could not shorten the link (network issue) — sending the full link instead, which may not open correctly in WhatsApp.';
-      } else if(!openWa(waHref)){
-        document.getElementById('waFallback2').textContent = 'Tap the green button above to open WhatsApp.';
-      }
+    wireWaButton({
+      btnId:'waBtn2', fallbackId:'waFallback2', inputId:'shareLinkInput2',
+      link: link, phone: clientWa, label:'Send to '+esc(firstName(name))+' via WhatsApp',
+      buildMsg:function(u){ return 'Hi '+firstName(name)+'! Your FIT2U nutrition assessment & action plan is ready. View it here: '+u; }
     });
   }
 }
